@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ollama GPU Hosts - 3D Globe</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000;
+    color: #e0e0e0;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    overflow: hidden;
+    cursor: grab;
+  }
+  body:active { cursor: grabbing; }
+
+  #canvas { display: block; }
+
+  #hud {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    z-index: 10;
+    pointer-events: none;
+  }
+  #hud h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #00ff88;
+    text-shadow: 0 0 20px rgba(0,255,136,0.5);
+    letter-spacing: 2px;
+  }
+  #hud .subtitle {
+    font-size: 12px;
+    color: #666;
+    margin-top: 4px;
+  }
+  #stats {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 10;
+    text-align: right;
+    pointer-events: none;
+  }
+  #stats .stat {
+    font-size: 13px;
+    color: #888;
+    margin-bottom: 4px;
+  }
+  #stats .stat span {
+    color: #00ff88;
+    font-weight: 700;
+  }
+
+  #tooltip {
+    position: fixed;
+    display: none;
+    background: rgba(10,10,20,0.92);
+    border: 1px solid rgba(0,255,136,0.3);
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-size: 12px;
+    line-height: 1.6;
+    max-width: 380px;
+    z-index: 100;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 20px rgba(0,255,136,0.1);
+    pointer-events: none;
+  }
+  #tooltip .tt-ip {
+    font-size: 15px;
+    font-weight: 700;
+    color: #00ff88;
+    margin-bottom: 6px;
+  }
+  #tooltip .tt-loc {
+    color: #aaa;
+    margin-bottom: 4px;
+  }
+  #tooltip .tt-org {
+    color: #7aa2f7;
+    margin-bottom: 6px;
+  }
+  #tooltip .tt-gpu {
+    color: #ff9e64;
+  }
+  #tooltip .tt-models {
+    color: #666;
+    font-size: 11px;
+    margin-top: 6px;
+    max-height: 60px;
+    overflow: hidden;
+  }
+
+  #legend {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    z-index: 10;
+    pointer-events: none;
+  }
+  #legend .item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #666;
+    margin-bottom: 4px;
+  }
+  #legend .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  #controls {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 10;
+    font-size: 11px;
+    color: #444;
+    text-align: right;
+  }
+
+  #rotate-toggle {
+    position: fixed;
+    bottom: 60px;
+    right: 20px;
+    z-index: 10;
+    background: rgba(10,10,20,0.8);
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 8px 16px;
+    color: #e0e0e0;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #rotate-toggle:hover {
+    border-color: #00ff88;
+    box-shadow: 0 0 10px rgba(0,255,136,0.2);
+  }
+  #rotate-toggle .indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    transition: background 0.2s;
+  }
+  #rotate-toggle .indicator.on  { background: #00ff88; box-shadow: 0 0 6px rgba(0,255,136,0.6); }
+  #rotate-toggle .indicator.off { background: #555; }
+
+  #search-box {
+    position: fixed;
+    top: 80px;
+    left: 20px;
+    z-index: 10;
+  }
+  #search-box input {
+    background: rgba(10,10,20,0.8);
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 8px 14px;
+    color: #e0e0e0;
+    font-family: inherit;
+    font-size: 13px;
+    width: 300px;
+    outline: none;
+    backdrop-filter: blur(8px);
+  }
+  #search-box input:focus {
+    border-color: #00ff88;
+    box-shadow: 0 0 10px rgba(0,255,136,0.2);
+  }
+  #search-box input::placeholder { color: #555; }
+
+  #suggestions {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 300px;
+    max-height: 340px;
+    overflow-y: auto;
+    background: rgba(10,10,20,0.95);
+    border: 1px solid #333;
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    backdrop-filter: blur(12px);
+    display: none;
+    z-index: 11;
+  }
+  #suggestions::-webkit-scrollbar { width: 4px; }
+  #suggestions::-webkit-scrollbar-track { background: transparent; }
+  #suggestions::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+  .suggestion-category {
+    padding: 6px 14px 2px;
+    font-size: 10px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-top: 1px solid #1a1a2e;
+  }
+  .suggestion-category:first-child { border-top: none; }
+
+  .suggestion-item {
+    padding: 8px 14px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background 0.1s;
+  }
+  .suggestion-item:hover,
+  .suggestion-item.active {
+    background: rgba(0,255,136,0.08);
+  }
+  .suggestion-item .label {
+    color: #e0e0e0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+  }
+  .suggestion-item .label mark {
+    color: #00ff88;
+    background: none;
+    font-weight: 700;
+  }
+  .suggestion-item .count {
+    color: #555;
+    font-size: 11px;
+    margin-left: 10px;
+    flex-shrink: 0;
+  }
+
+  .loading {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 200;
+    text-align: center;
+  }
+  .loading .spinner {
+    width: 48px; height: 48px;
+    border: 3px solid #222;
+    border-top-color: #00ff88;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="loading" id="loading">
+  <div class="spinner"></div>
+  <div style="color:#00ff88; font-size:14px;">Loading Globe...</div>
+</div>
+
+<div id="hud">
+  <h1>OLLAMA GPU HOSTS</h1>
+  <div class="subtitle">Global distribution of publicly exposed Ollama instances with GPU</div>
+</div>
+
+<div id="stats">
+  <div class="stat">Total hosts: <span id="stat-total">0</span></div>
+  <div class="stat">Countries: <span id="stat-countries">0</span></div>
+  <div class="stat">With VRAM data: <span id="stat-vram">0</span></div>
+  <div class="stat">Visible: <span id="stat-visible">0</span></div>
+</div>
+
+<div id="search-box">
+  <input type="text" id="search" placeholder="Search IP, city, org, country, model..." autocomplete="off">
+  <div id="suggestions"></div>
+</div>
+
+<div id="tooltip"></div>
+
+<div id="legend">
+  <div class="item"><div class="dot" style="background:#00ff88;"></div> VRAM &lt; 8 GB</div>
+  <div class="item"><div class="dot" style="background:#f7c948;"></div> VRAM 8-16 GB</div>
+  <div class="item"><div class="dot" style="background:#ff6b6b;"></div> VRAM 16-24 GB</div>
+  <div class="item"><div class="dot" style="background:#ff2d76;"></div> VRAM &gt; 24 GB</div>
+  <div class="item"><div class="dot" style="background:#4a6cf7; opacity:0.6;"></div> VRAM unknown</div>
+</div>
+
+<button id="rotate-toggle" title="Toggle auto-rotation">
+  <div class="indicator on" id="rotate-indicator"></div>
+  <span id="rotate-label">Rotation ON</span>
+</button>
+
+<div id="controls">
+  Drag to rotate &middot; Scroll to zoom &middot; Hover for details &middot; Space to toggle rotation
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const GLOBE_RADIUS = 5;
+const POINT_BASE_SIZE = 0.04;
+const ATMOSPHERE_COLOR = new THREE.Color(0x00ff88);
+
+let scene, camera, renderer, controls, globe, pointsMesh, glowMesh, gridMesh;
+let hostsData = [];
+let filteredIndices = [];
+let raycaster, mouse;
+let hoveredIndex = -1;
+let autoRotate = true;
+
+// Search index
+let searchIndex = {
+  countries: {},   // country -> [indices]
+  cities: {},      // city -> [indices]
+  orgs: {},        // org -> [indices]
+  models: {},      // model -> [indices]
+  ips: {},         // ip -> index
+};
+let activeSuggestion = -1;
+
+// --- Init ---
+async function init() {
+  // Scene
+  scene = new THREE.Scene();
+
+  // Camera
+  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 2, 14);
+
+  // Renderer
+  renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('canvas'), antialias: true, alpha: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.2;
+
+  // Controls
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.05;
+  controls.rotateSpeed = 0.5;
+  controls.minDistance = 6.5;
+  controls.maxDistance = 30;
+  controls.enablePan = false;
+
+  // Raycaster
+  raycaster = new THREE.Raycaster();
+  raycaster.params.Points.threshold = 0.12;
+  mouse = new THREE.Vector2();
+
+  // Lights
+  const ambientLight = new THREE.AmbientLight(0x333344, 1.5);
+  scene.add(ambientLight);
+
+  const sunLight = new THREE.DirectionalLight(0xffffff, 2.0);
+  sunLight.position.set(5, 3, 5);
+  scene.add(sunLight);
+
+  const rimLight = new THREE.DirectionalLight(0x4488ff, 0.6);
+  rimLight.position.set(-5, -2, -5);
+  scene.add(rimLight);
+
+  // Stars
+  createStars();
+
+  // Globe
+  await createGlobe();
+
+  // Atmosphere glow
+  createAtmosphere();
+
+  // Load data
+  await loadData();
+
+  // Events
+  window.addEventListener('resize', onResize);
+  window.addEventListener('mousemove', onMouseMove);
+
+  const searchInput = document.getElementById('search');
+  searchInput.addEventListener('input', onSearchInput);
+  searchInput.addEventListener('keydown', onSearchKeydown);
+  searchInput.addEventListener('focus', () => { if (searchInput.value.trim()) showSuggestions(searchInput.value.trim()); });
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('search-box').contains(e.target)) hideSuggestions();
+  });
+
+  // Rotation toggle
+  document.getElementById('rotate-toggle').addEventListener('click', toggleRotation);
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && document.activeElement !== searchInput) {
+      e.preventDefault();
+      toggleRotation();
+    }
+  });
+
+  document.getElementById('loading').style.display = 'none';
+
+  animate();
+}
+
+function createStars() {
+  const geometry = new THREE.BufferGeometry();
+  const count = 8000;
+  const positions = new Float32Array(count * 3);
+  for (let i = 0; i < count * 3; i++) {
+    positions[i] = (Math.random() - 0.5) * 600;
+  }
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  const material = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 0.15,
+    sizeAttenuation: true,
+    transparent: true,
+    opacity: 0.8,
+  });
+
+  scene.add(new THREE.Points(geometry, material));
+}
+
+async function createGlobe() {
+  const textureLoader = new THREE.TextureLoader();
+
+  // Earth textures from NASA Blue Marble
+  const earthTexture = await loadTexture(textureLoader,
+    'https://unpkg.com/three-globe@2.35.0/example/img/earth-blue-marble.jpg');
+  const bumpTexture = await loadTexture(textureLoader,
+    'https://unpkg.com/three-globe@2.35.0/example/img/earth-topology.png');
+
+  const geometry = new THREE.SphereGeometry(GLOBE_RADIUS, 128, 128);
+  const material = new THREE.MeshStandardMaterial({
+    map: earthTexture,
+    bumpMap: bumpTexture,
+    bumpScale: 0.06,
+    roughness: 0.75,
+    metalness: 0.05,
+  });
+
+  globe = new THREE.Mesh(geometry, material);
+  scene.add(globe);
+
+  // Country borders / grid lines
+  const gridMat = new THREE.MeshBasicMaterial({
+    color: 0x00ff88,
+    transparent: true,
+    opacity: 0.03,
+    wireframe: true,
+  });
+  gridMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(GLOBE_RADIUS + 0.005, 64, 64),
+    gridMat
+  );
+  scene.add(gridMesh);
+}
+
+function loadTexture(loader, url) {
+  return new Promise((resolve) => {
+    loader.load(url, resolve, undefined, () => {
+      // Fallback: solid color texture
+      const canvas = document.createElement('canvas');
+      canvas.width = 2; canvas.height = 2;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#1a3a5c';
+      ctx.fillRect(0, 0, 2, 2);
+      resolve(new THREE.CanvasTexture(canvas));
+    });
+  });
+}
+
+function createAtmosphere() {
+  const vertexShader = `
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+    void main() {
+      vNormal = normalize(normalMatrix * normal);
+      vPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `;
+  const fragmentShader = `
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+    void main() {
+      float intensity = pow(0.72 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.0);
+      vec3 color = vec3(0.0, 1.0, 0.53);
+      gl_FragColor = vec4(color, intensity * 0.4);
+    }
+  `;
+
+  const geometry = new THREE.SphereGeometry(GLOBE_RADIUS * 1.12, 64, 64);
+  const material = new THREE.ShaderMaterial({
+    vertexShader,
+    fragmentShader,
+    side: THREE.BackSide,
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    depthWrite: false,
+  });
+
+  glowMesh = new THREE.Mesh(geometry, material);
+  scene.add(glowMesh);
+}
+
+function latLonToVec3(lat, lon, radius) {
+  // Standard spherical coordinate conversion matching Three.js SphereGeometry UV
+  const phi = (90 - lat) * (Math.PI / 180);
+  const theta = (lon + 180) * (Math.PI / 180);
+  return new THREE.Vector3(
+    -radius * Math.sin(phi) * Math.cos(theta),
+     radius * Math.cos(phi),
+     radius * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+function getColorForVram(vram_gb) {
+  if (vram_gb <= 0) return new THREE.Color(0x4a6cf7);   // unknown
+  if (vram_gb < 8)  return new THREE.Color(0x00ff88);   // green
+  if (vram_gb < 16) return new THREE.Color(0xf7c948);   // yellow
+  if (vram_gb < 24) return new THREE.Color(0xff6b6b);   // red
+  return new THREE.Color(0xff2d76);                      // pink/hot
+}
+
+function getSizeForVram(vram_gb) {
+  if (vram_gb <= 0) return POINT_BASE_SIZE;
+  return POINT_BASE_SIZE + Math.min(vram_gb / 40, 0.12);
+}
+
+async function loadData() {
+  const resp = await fetch('hosts_geo.json');
+  hostsData = await resp.json();
+
+  // Build search index
+  buildSearchIndex();
+
+  filteredIndices = hostsData.map((_, i) => i);
+  createPoints();
+  updateStats();
+}
+
+function buildSearchIndex() {
+  searchIndex = { countries: {}, cities: {}, orgs: {}, models: {}, ips: {} };
+
+  for (let i = 0; i < hostsData.length; i++) {
+    const h = hostsData[i];
+
+    // Country
+    if (h.country) {
+      const key = h.country;
+      (searchIndex.countries[key] = searchIndex.countries[key] || []).push(i);
+    }
+    // City
+    if (h.city) {
+      const key = h.city + ', ' + h.country;
+      (searchIndex.cities[key] = searchIndex.cities[key] || []).push(i);
+    }
+    // Org
+    if (h.org) {
+      (searchIndex.orgs[h.org] = searchIndex.orgs[h.org] || []).push(i);
+    }
+    // Models
+    if (h.models) {
+      h.models.split(',').forEach(m => {
+        const model = m.trim();
+        if (model) {
+          (searchIndex.models[model] = searchIndex.models[model] || []).push(i);
+        }
+      });
+    }
+    // IP
+    searchIndex.ips[h.ip] = i;
+  }
+}
+
+function createPoints() {
+  if (pointsMesh) scene.remove(pointsMesh);
+
+  const count = filteredIndices.length;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const sizes = new Float32Array(count);
+
+  for (let i = 0; i < count; i++) {
+    const host = hostsData[filteredIndices[i]];
+    const pos = latLonToVec3(host.lat, host.lon, GLOBE_RADIUS + 0.02);
+    positions[i * 3] = pos.x;
+    positions[i * 3 + 1] = pos.y;
+    positions[i * 3 + 2] = pos.z;
+
+    const color = getColorForVram(host.vram_gb);
+    colors[i * 3] = color.r;
+    colors[i * 3 + 1] = color.g;
+    colors[i * 3 + 2] = color.b;
+
+    sizes[i] = getSizeForVram(host.vram_gb);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+  const vertexShader = `
+    attribute float size;
+    varying vec3 vColor;
+    varying float vSize;
+    void main() {
+      vColor = color;
+      vSize = size;
+      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = size * 300.0 / -mvPosition.z;
+      gl_Position = projectionMatrix * mvPosition;
+    }
+  `;
+
+  const fragmentShader = `
+    varying vec3 vColor;
+    varying float vSize;
+    void main() {
+      float d = length(gl_PointCoord - vec2(0.5));
+      if (d > 0.5) discard;
+      float glow = 1.0 - smoothstep(0.0, 0.5, d);
+      float core = 1.0 - smoothstep(0.0, 0.2, d);
+      vec3 finalColor = vColor * (glow * 0.6 + core * 0.6);
+      float alpha = glow * 0.7 + core * 0.5;
+      gl_FragColor = vec4(finalColor, alpha);
+    }
+  `;
+
+  const material = new THREE.ShaderMaterial({
+    vertexShader,
+    fragmentShader,
+    vertexColors: true,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+
+  pointsMesh = new THREE.Points(geometry, material);
+  scene.add(pointsMesh);
+}
+
+// --- Beams (connection lines from point to surface) ---
+function createBeamForHost(host) {
+  const surfacePos = latLonToVec3(host.lat, host.lon, GLOBE_RADIUS + 0.01);
+  const outerPos = latLonToVec3(host.lat, host.lon, GLOBE_RADIUS + 0.3 + host.vram_gb * 0.01);
+
+  const geometry = new THREE.BufferGeometry().setFromPoints([surfacePos, outerPos]);
+  const material = new THREE.LineBasicMaterial({
+    color: getColorForVram(host.vram_gb),
+    transparent: true,
+    opacity: 0.6,
+  });
+
+  return new THREE.Line(geometry, material);
+}
+
+function updateStats() {
+  const countries = new Set(filteredIndices.map(i => hostsData[i].country));
+  const withVram = filteredIndices.filter(i => hostsData[i].vram_gb > 0);
+
+  document.getElementById('stat-total').textContent = hostsData.length.toLocaleString();
+  document.getElementById('stat-countries').textContent = countries.size;
+  document.getElementById('stat-vram').textContent = withVram.length.toLocaleString();
+  document.getElementById('stat-visible').textContent = filteredIndices.length.toLocaleString();
+}
+
+// --- Rotation toggle ---
+function toggleRotation() {
+  autoRotate = !autoRotate;
+  const indicator = document.getElementById('rotate-indicator');
+  const label = document.getElementById('rotate-label');
+  indicator.className = 'indicator ' + (autoRotate ? 'on' : 'off');
+  label.textContent = autoRotate ? 'Rotation ON' : 'Rotation OFF';
+}
+
+// --- Indexed search with suggestions ---
+function onSearchInput(e) {
+  const q = e.target.value.trim();
+  activeSuggestion = -1;
+  if (!q) {
+    hideSuggestions();
+    filteredIndices = hostsData.map((_, i) => i);
+    createPoints();
+    updateStats();
+    return;
+  }
+  showSuggestions(q);
+  applyFilter(q);
+}
+
+function onSearchKeydown(e) {
+  const box = document.getElementById('suggestions');
+  const items = box.querySelectorAll('.suggestion-item');
+  if (!items.length) return;
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    activeSuggestion = Math.min(activeSuggestion + 1, items.length - 1);
+    updateActiveSuggestion(items);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    activeSuggestion = Math.max(activeSuggestion - 1, 0);
+    updateActiveSuggestion(items);
+  } else if (e.key === 'Enter' && activeSuggestion >= 0) {
+    e.preventDefault();
+    items[activeSuggestion].click();
+  } else if (e.key === 'Escape') {
+    hideSuggestions();
+  }
+}
+
+function updateActiveSuggestion(items) {
+  items.forEach((el, i) => el.classList.toggle('active', i === activeSuggestion));
+  if (activeSuggestion >= 0) items[activeSuggestion].scrollIntoView({ block: 'nearest' });
+}
+
+function showSuggestions(query) {
+  const q = query.toLowerCase();
+  const box = document.getElementById('suggestions');
+  let html = '';
+
+  const matchEntries = (index, category, icon) => {
+    const matches = [];
+    for (const [key, indices] of Object.entries(index)) {
+      if (key.toLowerCase().includes(q)) {
+        matches.push({ key, count: indices.length });
+      }
+    }
+    matches.sort((a, b) => b.count - a.count);
+    return matches.slice(0, 6).map(m => ({ ...m, category, icon }));
+  };
+
+  const countries = matchEntries(searchIndex.countries, 'Countries', '');
+  const cities    = matchEntries(searchIndex.cities,    'Cities', '');
+  const orgs      = matchEntries(searchIndex.orgs,      'Organizations', '');
+  const models    = matchEntries(searchIndex.models,     'Models', '');
+
+  // IPs
+  const ipMatches = [];
+  for (const ip of Object.keys(searchIndex.ips)) {
+    if (ip.includes(q)) ipMatches.push({ key: ip, count: 1, category: 'IPs', icon: '' });
+    if (ipMatches.length >= 6) break;
+  }
+
+  const sections = [
+    { label: 'Countries', items: countries },
+    { label: 'Cities', items: cities },
+    { label: 'Organizations', items: orgs },
+    { label: 'Models', items: models },
+    { label: 'IPs', items: ipMatches },
+  ];
+
+  let totalItems = 0;
+  for (const section of sections) {
+    if (!section.items.length) continue;
+    html += `<div class="suggestion-category">${section.label}</div>`;
+    for (const item of section.items) {
+      const highlighted = highlightMatch(item.key, q);
+      const countLabel = item.count > 1 ? `${item.count} hosts` : '1 host';
+      html += `<div class="suggestion-item" data-value="${escapeHtml(item.key)}" data-category="${section.label}">
+        <span class="label">${highlighted}</span>
+        <span class="count">${countLabel}</span>
+      </div>`;
+      totalItems++;
+    }
+  }
+
+  if (totalItems === 0) {
+    html = '<div class="suggestion-category">No matches</div>';
+  }
+
+  box.innerHTML = html;
+  box.style.display = 'block';
+
+  // Click handlers
+  box.querySelectorAll('.suggestion-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const val = el.dataset.value;
+      document.getElementById('search').value = val;
+      hideSuggestions();
+      applyFilter(val);
+    });
+  });
+}
+
+function hideSuggestions() {
+  document.getElementById('suggestions').style.display = 'none';
+  activeSuggestion = -1;
+}
+
+function highlightMatch(text, query) {
+  const idx = text.toLowerCase().indexOf(query);
+  if (idx === -1) return escapeHtml(text);
+  const before = escapeHtml(text.slice(0, idx));
+  const match  = escapeHtml(text.slice(idx, idx + query.length));
+  const after  = escapeHtml(text.slice(idx + query.length));
+  return `${before}<mark>${match}</mark>${after}`;
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function applyFilter(query) {
+  const q = query.toLowerCase().trim();
+  if (!q) {
+    filteredIndices = hostsData.map((_, i) => i);
+  } else {
+    // Use index for exact matches first, fallback to full scan
+    const indexedSet = new Set();
+
+    for (const [key, indices] of Object.entries(searchIndex.countries)) {
+      if (key.toLowerCase().includes(q)) indices.forEach(i => indexedSet.add(i));
+    }
+    for (const [key, indices] of Object.entries(searchIndex.cities)) {
+      if (key.toLowerCase().includes(q)) indices.forEach(i => indexedSet.add(i));
+    }
+    for (const [key, indices] of Object.entries(searchIndex.orgs)) {
+      if (key.toLowerCase().includes(q)) indices.forEach(i => indexedSet.add(i));
+    }
+    for (const [key, indices] of Object.entries(searchIndex.models)) {
+      if (key.toLowerCase().includes(q)) indices.forEach(i => indexedSet.add(i));
+    }
+    for (const [ip, idx] of Object.entries(searchIndex.ips)) {
+      if (ip.includes(q)) indexedSet.add(idx);
+    }
+
+    filteredIndices = [...indexedSet].sort((a, b) => a - b);
+  }
+  createPoints();
+  updateStats();
+}
+
+function onMouseMove(e) {
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+  if (!pointsMesh) return;
+
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObject(pointsMesh);
+
+  const tooltip = document.getElementById('tooltip');
+
+  if (intersects.length > 0) {
+    const idx = intersects[0].index;
+    if (idx === hoveredIndex) {
+      // just reposition
+      tooltip.style.left = (e.clientX + 16) + 'px';
+      tooltip.style.top = (e.clientY - 10) + 'px';
+      return;
+    }
+    hoveredIndex = idx;
+    const host = hostsData[filteredIndices[idx]];
+
+    const vramStr = host.vram_gb > 0 ? `${host.vram_gb} GB` : 'Unknown';
+    const modelsStr = host.models
+      ? host.models.split(',').slice(0, 5).map(m => m.trim()).join(', ')
+      : 'None listed';
+
+    tooltip.innerHTML = `
+      <div class="tt-ip">${host.ip}:${host.port}</div>
+      <div class="tt-loc">${host.city}, ${host.country}</div>
+      <div class="tt-org">${host.org}</div>
+      <div class="tt-gpu">GPU: ${host.gpu || 'Detected'} &middot; VRAM: ${vramStr}</div>
+      <div class="tt-models">Models: ${modelsStr}</div>
+    `;
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 16) + 'px';
+    tooltip.style.top = (e.clientY - 10) + 'px';
+
+    // Keep tooltip on screen
+    const rect = tooltip.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      tooltip.style.left = (e.clientX - rect.width - 16) + 'px';
+    }
+    if (rect.bottom > window.innerHeight) {
+      tooltip.style.top = (e.clientY - rect.height - 10) + 'px';
+    }
+  } else {
+    hoveredIndex = -1;
+    tooltip.style.display = 'none';
+  }
+}
+
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  // Slow auto-rotate (toggleable)
+  if (autoRotate && globe && !controls.isDragging) {
+    globe.rotation.y += 0.0008;
+    if (pointsMesh) pointsMesh.rotation.y += 0.0008;
+    if (glowMesh) glowMesh.rotation.y += 0.0008;
+    if (gridMesh) gridMesh.rotation.y += 0.0008;
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+init();
+</script>
+</body>
+</html>

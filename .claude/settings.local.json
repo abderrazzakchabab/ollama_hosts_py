@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import csv; r=csv.DictReader\\(open\\(''ollama_gpu_hosts.csv''\\)\\); cities=set\\(\\); [cities.add\\(\\(row[''country''],row[''city'']\\)\\) for row in r]; print\\(f''{len\\(cities\\)} unique city/country pairs''\\); [print\\(f''  {c[0]} / {c[1]}''\\) for c in sorted\\(cities\\)[:20]]\")",
+      "Bash(python3 geocode_hosts.py)",
+      "Bash(open http://localhost:8888)",
+      "Bash(python3 -c \":*)",
+      "Bash(python3 geocode_cities.py)",
+      "Bash(python3 -u geocode_cities.py)",
+      "Bash(python3 -u geocode_fix.py)",
+      "Bash(python3 rebuild_json.py)"
+    ]
+  }
+}
